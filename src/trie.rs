@@ -77,6 +77,7 @@ impl Trie {
 fn test() {
     let mut trie = Trie::new();
 
+    trie.insert(&["a", "p", "p"]);
     trie.insert(&["a", "p", "p", "l", "e"]);
     trie.insert(&["b", "a", "n", "a", "n", "a"]);
     trie.insert(&["g", "r", "a", "p", "e"]);
@@ -85,14 +86,17 @@ fn test() {
     assert!(trie.starts_with(&["a", "p", "p", "l", "e", "_"]));
     assert!(!trie.starts_with(&["a", "p", "p", "l", "l", "_"]));
 
-    assert!(trie.search(&["a", "p", "p", "l", "e"]));
-    assert!(trie.search(&["b", "a", "n", "a", "n", "a"]));
-    assert!(!trie.search(&["o", "r", "a", "n", "g", "e"]));
-
     assert!(trie.starts_with(&["a", "p", "p"]));
+    assert!(trie.starts_with(&["a", "p", "p", "p"]));
+
     assert!(trie.starts_with(&["g", "r"]));
     assert!(!trie.starts_with(&["p", "e", "a"]));
 
     assert!(trie.starts_with(&["c"]));
     assert!(trie.starts_with(&["c", "s"]));
+
+    assert!(trie.search(&["a", "p", "p", "l", "e"]));
+    assert!(trie.search(&["b", "a", "n", "a", "n", "a"]));
+    assert!(!trie.search(&["o", "r", "a", "n", "g", "e"]));
 }
+

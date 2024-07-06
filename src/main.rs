@@ -1,17 +1,32 @@
+mod dns;
+mod macros;
+mod payload;
 mod trie;
 
 use clap::Parser;
 use std::{fs::read_to_string, net::SocketAddr, sync::Arc};
-use tokio::{net::UdpSocket, sync::mpsc};
+use tokio::{
+    net::UdpSocket,
+    select, spawn,
+    sync::{mpsc, oneshot},
+};
 
-use crate::trie::Trie;
+use crate::{
+    dns::{Dns, DnsCommand},
+    payload::Payload,
+    trie::Trie,
+};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     /// Domain
-    #[arg(short, long, default_value = "deploy/domain.conf")]
+    #[arg(short, long, default_value = "deploy/conf.d/domain.conf")]
     domain: String,
+
+    /// ExcludeDomain
+    #[arg(short, long, default_value = "deploy/conf.d/domain_exclude.conf")]
+    exclude_domain: String,
 }
 
 const RESPONSE_START: &[u8] = &[0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01];
@@ -19,58 +34,23 @@ const RESPONSE_END: &[u8] = &[
     0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0xf4, 0x00, 0x04, 0x01, 0x02, 0x03, 0x04,
     0x00, 0x00, 0x29, 0x05, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
+const MAX_BUFFER: usize = 5;
 
-#[tokio::main]
-async fn main() {
-    let Args { domain } = Args::parse();
-    println!("domain: {}", domain);
-
-    let mut trie = Trie::new();
-    trie.init_doamin(&domain);
-
-    let sock_r = Arc::new(UdpSocket::bind("0.0.0.0:53").await.unwrap());
-    let sock_s = sock_r.clone();
-    println!("bind: 53");
-
-    let sock_remote = Arc::new(UdpSocket::bind("0.0.0.0:58888").await.unwrap());
-    let sock_remote_addr = "223.5.5.5:53".parse::<SocketAddr>().unwrap();
-
-    let (tx, mut rx) = mpsc::channel::<(Vec<u8>, SocketAddr)>(3);
-
-    tokio::spawn(async move {
-        let mut rbuf = [0; 1024];
-        let trie = Arc::new(trie);
-        while let Some((buf, addr)) = rx.recv().await {
-            let trie = trie.clone();
-            let (is, end_offset) = trie.is_domain(&buf);
-            if is {
-                let buf = response(&buf, end_offset);
-                let _len = sock_s.send_to(&buf, &addr).await.unwrap();
-                #[cfg(debug_assertions)]
-                dbg!(_len);
-            } else {
-                sock_remote.connect(sock_remote_addr).await.unwrap();
-                sock_remote.send(&buf).await.unwrap();
-                let len = sock_remote.recv(&mut rbuf).await.unwrap();
-
-                let _len = sock_s.send_to(&rbuf[..len], &addr).await.unwrap();
-                #[cfg(debug_assertions)]
-                dbg!(_len);
-            }
+impl Trie {
+    fn init_doamin(&mut self, domain_path: &str) {
+        for line in read_to_string(domain_path).expect("[E] read file").lines() {
+            let mut d: Vec<_> = line.trim().split(".").collect();
+            d.reverse();
+            self.insert(&d);
         }
-    });
+    }
 
-    let mut buf = [0; 1024];
-    loop {
-        let (len, addr) = sock_r.recv_from(&mut buf).await.unwrap();
-        #[cfg(debug_assertions)]
-        dbg!(len, addr);
-
-        tx.send((buf[..len].to_vec(), addr)).await.unwrap();
+    pub fn is_domain(&self, domain: &[&str]) -> bool {
+        self.starts_with(domain)
     }
 }
 
-fn response(buf: &[u8], end_offset: usize) -> Vec<u8> {
+fn fake_response(buf: &[u8], end_offset: usize) -> Vec<u8> {
     // "8fd6 0120 0001000000000001 0378723105766c70657203746f700000010001 0000291000000000000000"
     // "e116 0120 0001000000000001 02787205766c70657203746f700000010001 0000291000000000000000"
 
@@ -90,60 +70,123 @@ fn response(buf: &[u8], end_offset: usize) -> Vec<u8> {
     r
 }
 
-impl Trie {
-    fn init_doamin(&mut self, domain_path: &str) {
-        for line in read_to_string(domain_path).unwrap().lines() {
-            let mut d: Vec<_> = line.trim().split(".").collect();
-            d.reverse();
-            self.insert(&d);
+#[tokio::main]
+async fn main() {
+    let Args {
+        domain,
+        exclude_domain,
+    } = Args::parse();
+    println!("[+] domain: {domain:?}");
+    println!("[+] exclude_domain: {exclude_domain:?}");
+
+    let mut trie = Trie::new();
+    let mut exclude_trie = Trie::new();
+    trie.init_doamin(&domain);
+    exclude_trie.init_doamin(&exclude_domain);
+
+    let sock_local = Arc::new(UdpSocket::bind("0.0.0.0:53").await.expect("[E] bind 0:53"));
+    println!("[+] bind: 53");
+
+    let (tx_dns, rx_dns) = mpsc::channel::<DnsCommand>(MAX_BUFFER);
+    let dns = Dns::new().await;
+
+    let dns_c = dns.clone();
+    spawn(async move { dns_c.work_cmd(rx_dns).await });
+    spawn(async move { dns.work_response().await });
+
+    let sock_local_c = sock_local.clone();
+    let (tx_req, mut rx_req) = mpsc::channel::<(Payload, SocketAddr)>(MAX_BUFFER);
+    spawn(async move {
+        while let Some((payload, addr)) = rx_req.recv().await {
+            #[cfg(debug_assertions)]
+            println!("[+] {addr:?} send raw request");
+
+            let (resp, rx) = oneshot::channel::<Payload>();
+            let id = payload.id();
+            tx_dns
+                .send(DnsCommand::Query { payload, resp })
+                .await
+                .expect("[E] raw request dns cmd query");
+
+            let payload = handle!(handle!(cancel!(rx, 5), e => {
+                println!("[E] raw request dns rx {e:?} {addr:?}");
+                tx_dns
+                .send(DnsCommand::TimedOut { id })
+                .await
+                .expect("[E] raw request dns cmd timedout");
+                continue;
+            }), e => {
+                println!("[E] raw request dns rx {e:?} {addr:?}");
+                continue;
+            });
+
+            #[cfg(debug_assertions)]
+            println!("[+] {addr:?} raw request id {} {}", id, payload.id());
+
+            let _len = sock_local_c
+                .send_to(payload.as_ref(), &addr)
+                .await
+                .expect("[E] raw response send_to");
+
+            #[cfg(debug_assertions)]
+            println!("[+] {addr:?} send raw response({_len:?})");
         }
-    }
+    });
 
-    fn parse_domain_name<'a>(&'a self, message: &'a [u8], offset: usize) -> (Vec<&[u8]>, usize) {
-        let mut domain: Vec<&[u8]> = Vec::new();
-        let mut current_offset = offset;
+    let sock_local_c = sock_local.clone();
+    let (tx, mut rx) = mpsc::channel::<(Payload, SocketAddr)>(MAX_BUFFER);
+    spawn(async move {
+        while let Some((payload, addr)) = rx.recv().await {
+            let (domain, end_offset) = payload.domain();
 
-        loop {
-            let label_length = message[current_offset] as usize;
+            #[cfg(debug_assertions)]
+            println!(
+                "[+] {addr:?} domain {} offset {end_offset:?}",
+                &domain
+                    .iter()
+                    .cloned()
+                    .map(|s| s.to_string())
+                    .reduce(|acc, e| format!("{e}.{acc}"))
+                    .unwrap()
+            );
 
-            if label_length == 0 {
-                break;
+            let is = exclude_trie.is_domain(&domain);
+            #[cfg(debug_assertions)]
+            println!("[+] {addr:?} exclude {is:?}");
+            if is {
+                tx_req.send((payload, addr)).await.expect("[E] tx_req send");
+                continue;
             }
 
-            // Regular label
-            let label = &message[current_offset + 1..current_offset + 1 + label_length];
-            domain.push(label);
-
-            // Move to the next label
-            current_offset += label_length + 1;
-        }
-
-        (domain, current_offset)
-    }
-
-    pub fn is_domain(&self, buf: &[u8]) -> (bool, usize) {
-        let (domain, end_offset) = self.parse_domain_name(buf, 12);
-        #[cfg(debug_assertions)]
-        dbg!(end_offset);
-
-        let mut domain: Vec<&str> = domain
-            .iter()
-            .map(|&bytes| std::str::from_utf8(bytes).unwrap())
-            .collect();
-        domain.reverse();
-        #[cfg(debug_assertions)]
-        dbg!(&domain);
-
-        if self.starts_with(&domain) {
+            let is = trie.is_domain(&domain);
             #[cfg(debug_assertions)]
-            dbg!(true);
+            println!("[+] {addr:?} fake {is:?}");
+            if is {
+                let buf = fake_response(payload.as_ref(), end_offset);
+                let _len = sock_local_c
+                    .send_to(&buf, &addr)
+                    .await
+                    .expect("[E] sock_local send_to");
 
-            (true, end_offset)
-        } else {
-            #[cfg(debug_assertions)]
-            dbg!(false);
-
-            (false, end_offset)
+                #[cfg(debug_assertions)]
+                println!("[+] {addr:?} send fake response({_len:?})");
+            } else {
+                tx_req.send((payload, addr)).await.expect("[E] tx_req send");
+            }
         }
+    });
+
+    let mut buf = [0; 1024];
+    loop {
+        let (len, addr) = sock_local
+            .recv_from(&mut buf)
+            .await
+            .expect("[E] sock_local recv_from");
+        #[cfg(debug_assertions)]
+        println!("[+] {addr:?} recv request({len:?})");
+
+        tx.send((Payload::from(&buf[..len]), addr))
+            .await
+            .expect("[E] tx send");
     }
 }
