@@ -46,7 +46,6 @@ impl Payload {
         let domain: Vec<&str> = domain
             .iter()
             .map(|&bytes| std::str::from_utf8(bytes).unwrap())
-            .rev()
             .collect();
 
         (domain, current_offset)

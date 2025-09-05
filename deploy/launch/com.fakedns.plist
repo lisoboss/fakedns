@@ -1,0 +1,33 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE plist PUBLIC \"-//Apple Computer//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version='1.0'>
+	<dict>
+		<key>Label</key>
+		<string>com.fakedns</string>
+		<key>ProgramArguments</key>
+		<array>
+			<string>/usr/local/bin/fakedns</string>
+			<string>--domain</string>
+			<string>/etc/fakedns/domain.conf</string>
+			<string>--block-domain</string>
+			<string>/etc/fakedns/domain_block.conf</string>
+			<string>--exclude-domain</string>
+			<string>/etc/fakedns/domain_exclude.conf</string>
+		</array>
+		<key>StandardOutPath</key>
+		<string>/var/log/com.fakedns.log</string>
+		<key>StandardErrorPath</key>
+		<string>/var/log/com.fakedns.log</string>
+		<key>RunAtLoad</key>
+		<true/>
+		<key>KeepAlive</key>
+		<true/>
+		<key>AbandonProcessGroup</key>
+		<true/>
+		<key>EnvironmentVariables</key>
+		<dict>
+			<key>PATH</key>
+			<string>/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		</dict>
+	</dict>
+</plist>

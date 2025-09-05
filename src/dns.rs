@@ -22,14 +22,14 @@ pub struct Dns {
 }
 
 impl Dns {
-    pub async fn new() -> Self {
-        let sock = UdpSocket::bind("0.0.0.0:58888")
+    pub async fn new(remote_addr: &str) -> Self {
+        let sock = UdpSocket::bind("0.0.0.0:0")
             .await
-            .expect("[E] dns bind 0:58888");
+            .expect("[E] dns bind 0.0.0.0:0");
         #[cfg(debug_assertions)]
-        println!("[+] dns bind 0:58888");
+        println!("[+] dns bind 0:{}", sock.local_addr().unwrap().port());
 
-        let remote_addr = "223.5.5.5:53"
+        let remote_addr = remote_addr
             .parse::<SocketAddr>()
             .expect("[E] dns remote_addr parse");
         sock.connect(remote_addr)
