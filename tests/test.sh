@@ -1,0 +1,1 @@
+dnsperf -s 127.0.0.1 -d queries.txt -Q 1000 -l 60
