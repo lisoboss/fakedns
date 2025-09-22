@@ -17,5 +17,19 @@ tokio = { version = "1.47.1", features = [
     "time",
 ] }
 
+# console mode
+tokio-tracing = { package = "tokio", version = "1.47.1", features = ["full", "tracing"], optional = true}
+tracing = { version = "0.1.41", optional = true }
+tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"], optional = true}
+console-subscriber = { version = "0.4.1", optional = true }
+
 [dev-dependencies]
 tokio = { version = "1.47.1", features = ["full"] }
+
+[features]
+console = [
+    "tokio-tracing",
+    "tracing",
+    "tracing-subscriber",
+    "console-subscriber",
+]

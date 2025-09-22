@@ -110,6 +110,10 @@ async fn create_tx(sock_local: Arc<UdpSocket>, addr: &str) -> mpsc::Sender<(Payl
 
 #[tokio::main]
 async fn main() {
+    // init console subscriber
+    #[cfg(feature = "console")]
+    console_subscriber::init();
+
     let Args {
         domain,
         block_domain,

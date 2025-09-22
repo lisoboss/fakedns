@@ -1,8 +1,8 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::UdpSocket,
     select,
-    sync::{mpsc, oneshot, Mutex},
+    sync::{mpsc, oneshot, Mutex, RwLock},
 };
 
 use crate::{cancel, handle, payload::Payload};
@@ -17,7 +17,7 @@ pub enum DnsCommand {
 
 #[derive(Debug, Clone)]
 pub struct Dns {
-    sock: Arc<UdpSocket>,
+    sock: Arc<RwLock<UdpSocket>>,
     map: Arc<Mutex<HashMap<u16, Response>>>,
 }
 
@@ -39,8 +39,16 @@ impl Dns {
         println!("[+] dns connect {remote_addr:?}");
 
         Self {
-            sock: Arc::new(sock),
+            sock: Arc::new(RwLock::new(sock)),
             map: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    async fn recover_sock(&self, err: io::Error) {
+        if err.kind() == io::ErrorKind::AddrNotAvailable {
+            let mut sock = self.sock.write().await;
+            *sock = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+            println!("[+] dns reset due to AddrNotAvailable");
         }
     }
 
@@ -56,11 +64,13 @@ impl Dns {
                 }
                 DnsCommand::Query { payload, resp } => {
                     let mut map = self.map.lock().await;
-                    handle!(handle!(cancel!(self.sock.send(&payload.as_ref()), 3), e => {
-                        println!("[E] dns request send {e:?}");
+                    let sock = self.sock.read().await;
+                    handle!(handle!(cancel!(sock.send(&payload.as_ref()), 3), e => {
+                        println!("[E] dns request send cancel {e:?}");
                         continue;
                     }), e => {
                         println!("[E] dns request send {e:?}");
+                        self.recover_sock(e).await;
                         continue;
                     });
                     let _ = map.insert(payload.id(), resp);
@@ -74,7 +84,7 @@ impl Dns {
         println!("[+] dns work response");
 
         let mut buf = [0; 1024];
-        while let Ok(len) = self.sock.recv(&mut buf).await {
+        while let Ok(len) = self.sock.read().await.recv(&mut buf).await {
             let payload = Payload::from(&buf[..len]);
             let mut map = self.map.lock().await;
             if let Some(response) = map.remove(&payload.id()) {
