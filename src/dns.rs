@@ -83,14 +83,31 @@ impl Dns {
         #[cfg(debug_assertions)]
         println!("[+] dns work response");
 
-        let mut buf = [0; 1024];
-        while let Ok(len) = self.sock.read().await.recv(&mut buf).await {
-            let payload = Payload::from(&buf[..len]);
-            let mut map = self.map.lock().await;
-            if let Some(response) = map.remove(&payload.id()) {
-                if let Err(e) = response.send(payload) {
-                    println!("[E] raw response send {e:?}");
+        let mut buf = vec![0; 1024];
+        loop {
+            let len = match self.sock.read().await.recv(&mut buf).await {
+                Ok(len) => len,
+                Err(e) => {
+                    println!("[E] dns response recv {e:?}");
+                    continue;
                 }
+            };
+
+            let payload = Payload::from(&buf[..len]);
+
+            let sender = {
+                let mut map = self.map.lock().await;
+                match map.remove(&payload.id()) {
+                    Some(sender) => sender,
+                    None => {
+                        println!("[E] raw response id {} not found", payload.id());
+                        continue;
+                    }
+                }
+            };
+
+            if let Err(e) = sender.send(payload) {
+                println!("[E] raw response send {e:?}");
             }
         }
     }

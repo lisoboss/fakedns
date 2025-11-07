@@ -2,8 +2,11 @@ update-data:
 	deploy/scripts/update_data.sh
 
 build: update-data
-	cargo br
+	cargo build --release
 	deploy/scripts/build_conf.sh
+
+build-console:
+	RUSTFLAGS="--cfg tokio_unstable" cargo build --release --features console
 
 install: stop
 	sudo cp -f deploy/conf.d/domain.conf /etc/fakedns/domain.conf
@@ -19,3 +22,6 @@ publish: build install
 	sudo launchctl load /Library/LaunchDaemons/com.fakedns.plist 
 	sudo dscacheutil -flushcache
 	sudo killall -HUP mDNSResponder
+
+run:
+	RUSTFLAGS="--cfg tokio_unstable" cargo run --features console

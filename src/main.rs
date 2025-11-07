@@ -141,10 +141,16 @@ async fn main() {
             let (domain, end_offset) = payload.domain();
 
             #[cfg(debug_assertions)]
-            println!(
-                "[+] {addr:?} domain {} offset {end_offset:?}",
-                &domain.join(".")
-            );
+            {
+                let domain: Vec<_> = domain
+                    .iter()
+                    .map(|v| String::from_utf8(v.to_ascii_lowercase()).unwrap())
+                    .collect();
+                println!(
+                    "[+] {addr:?} offset {end_offset:?} domain {:?}",
+                    domain.join(".").as_str()
+                );
+            }
 
             // exclude
             let is = exclude_trie.domain_prefix_match(&domain);

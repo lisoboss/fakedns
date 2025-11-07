@@ -33,34 +33,36 @@ impl TryFrom<&Path> for DomainTrie {
 
     fn try_from(filename: &Path) -> Result<Self, Self::Error> {
         let content = read_to_string(filename)?;
-        let mut values = content
-            .lines()
-            .map(|line| line.trim())
-            .filter(|line| !line.is_empty())
-            .map(|line| {
-                let mut d: Vec<_> = line.split(".").collect();
-                d.reverse();
-                d
-            })
-            .collect::<Vec<_>>();
-        values.sort();
 
-        let mut trie: Self = Trie::new().into();
-        for value in values {
-            trie.insert(value);
+        let estimated_domains = content.len() / 20;
+        let mut trie: Self = Trie::with_capacity(estimated_domains).into();
+
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            let normalized = line.to_ascii_lowercase();
+            let parts: Vec<&[u8]> = normalized.as_bytes().split(|&b| b == b'.').rev().collect();
+
+            trie.insert(parts);
         }
+
+        trie.shrink_to_fit();
 
         Ok(trie)
     }
 }
 
 impl DomainTrie {
-    pub fn domain_prefix_match<I, T>(&self, domain: I) -> bool
+    #[inline]
+    pub fn domain_prefix_match<I, T>(&self, reversed_domain: I) -> bool
     where
         I: IntoIterator<Item = T>,
-        T: AsRef<str>,
+        T: AsRef<[u8]>,
         <I as IntoIterator>::IntoIter: DoubleEndedIterator,
     {
-        self.prefix_match(domain.into_iter().rev())
+        self.prefix_match(reversed_domain.into_iter())
     }
 }

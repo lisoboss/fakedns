@@ -23,7 +23,7 @@ impl Payload {
         a << 8 | b
     }
 
-    pub fn domain(&self) -> (Vec<&str>, usize) {
+    pub fn domain(&self) -> (Vec<&[u8]>, usize) {
         let mut domain: Vec<&[u8]> = Vec::new();
         // default offset = 12
         let mut current_offset = 12;
@@ -43,10 +43,7 @@ impl Payload {
             current_offset += label_length + 1;
         }
 
-        let domain: Vec<&str> = domain
-            .iter()
-            .map(|&bytes| std::str::from_utf8(bytes).unwrap())
-            .collect();
+        domain.reverse();
 
         (domain, current_offset)
     }
@@ -74,7 +71,8 @@ mod tests {
 
         let rel = Payload::from(&b[..]);
         let (domain, offset) = rel.domain();
-        assert_eq!(domain, vec!["top", "vlper", "xr1",]);
+        let domain2: Vec<&[u8]> = vec![b"top", b"vlper", b"xr1"];
+        assert_eq!(domain, domain2);
         assert_eq!(offset, 26);
     }
 }
