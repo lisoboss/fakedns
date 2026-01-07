@@ -1,7 +1,6 @@
 use std::{collections::HashMap, io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::UdpSocket,
-    select,
     sync::{mpsc, oneshot, Mutex, RwLock},
 };
 

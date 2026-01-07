@@ -6,8 +6,7 @@ mod trie;
 use clap::Parser;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::{
-    net::UdpSocket,
-    select, spawn,
+    net::UdpSocket, spawn,
     sync::{mpsc, oneshot},
 };
 
