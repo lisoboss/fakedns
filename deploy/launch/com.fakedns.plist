@@ -6,6 +6,9 @@
 		<string>com.fakedns</string>
 		<key>ProgramArguments</key>
 		<array>
+			<string>/opt/local/bin/daemondo</string>
+			<string>--label=fakedns</string>
+			<string>--start-cmd</string>
 			<string>/usr/local/bin/fakedns</string>
 			<string>--domain</string>
 			<string>/etc/fakedns/domain.conf</string>

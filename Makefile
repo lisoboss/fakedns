@@ -21,9 +21,9 @@ install: install-conf
 	sudo cp -f target/release/fakedns /usr/local/bin/fakedns
 
 stop:
-	sudo launchctl list | grep -q com.fakedns  && sudo launchctl unload /Library/LaunchDaemons/com.fakedns.plist
+	sudo launchctl list | grep -q com.fakedns && sudo launchctl unload /Library/LaunchDaemons/com.fakedns.plist || true
 
-start: stop
+start:
 	sudo launchctl load /Library/LaunchDaemons/com.fakedns.plist
 
 	
