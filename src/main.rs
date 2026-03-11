@@ -124,10 +124,11 @@ async fn main() {
     println!("[+] block_domain: {block_domain:?}");
     println!("[+] exclude_domain: {exclude_domain:?}");
 
-    let trie = DomainTrie::try_from(domain.as_path()).expect("[E] domain trie");
-    let block_trie = DomainTrie::try_from(block_domain.as_path()).expect("[E] block domain trie");
+    let trie = Arc::new(DomainTrie::try_from(domain.as_path()).expect("[E] domain trie"));
+    let block_trie =
+        Arc::new(DomainTrie::try_from(block_domain.as_path()).expect("[E] block domain trie"));
     let exclude_trie =
-        DomainTrie::try_from(exclude_domain.as_path()).expect("[E] exclude domain trie");
+        Arc::new(DomainTrie::try_from(exclude_domain.as_path()).expect("[E] exclude domain trie"));
 
     let sock_local = Arc::new(UdpSocket::bind("0.0.0.0:53").await.expect("[E] bind 0:53"));
     println!("[+] bind: 53");
@@ -139,62 +140,71 @@ async fn main() {
     let (tx, mut rx) = mpsc::channel::<(Payload, SocketAddr)>(MAX_BUFFER);
     spawn(async move {
         while let Some((payload, addr)) = rx.recv().await {
-            let (domain, end_offset) = payload.domain();
+            let ggdns_req_tx = ggdns_req_tx.clone();
+            let alidns_req_tx = alidns_req_tx.clone();
+            let sock_local_c = sock_local_c.clone();
+            let exclude_trie = exclude_trie.clone();
+            let block_trie = block_trie.clone();
+            let trie = trie.clone();
 
-            #[cfg(debug_assertions)]
-            {
-                let domain: Vec<_> = domain
-                    .iter()
-                    .map(|v| String::from_utf8(v.to_ascii_lowercase()).unwrap())
-                    .collect();
-                println!(
-                    "[+] {addr:?} offset {end_offset:?} domain {:?}",
-                    domain.join(".").as_str()
-                );
-            }
-
-            // exclude
-            let is = exclude_trie.domain_prefix_match(&domain);
-            #[cfg(debug_assertions)]
-            println!("[+] {addr:?} exclude {is:?}");
-            if is {
-                alidns_req_tx
-                    .send((payload, addr))
-                    .await
-                    .expect("[E] alidns_req_tx send");
-                continue;
-            }
-
-            // block
-            let is = block_trie.domain_prefix_match(&domain);
-            #[cfg(debug_assertions)]
-            println!("[+] {addr:?} block {is:?}");
-            if is {
-                let buf = fake_response(payload.as_ref(), end_offset);
-                let _len = sock_local_c
-                    .send_to(&buf, &addr)
-                    .await
-                    .expect("[E] sock_local send_to");
+            spawn(async move {
+                let (domain, end_offset) = payload.domain();
 
                 #[cfg(debug_assertions)]
-                println!("[+] {addr:?} send fake response({_len:?})");
-                continue;
-            }
+                {
+                    let domain: Vec<_> = domain
+                        .iter()
+                        .map(|v| String::from_utf8(v.to_ascii_lowercase()).unwrap())
+                        .collect();
+                    println!(
+                        "[+] {addr:?} offset {end_offset:?} domain {:?}",
+                        domain.join(".").as_str()
+                    );
+                }
 
-            let is = trie.domain_prefix_match(&domain);
-            #[cfg(debug_assertions)]
-            println!("[+] {addr:?} proxy {is:?}");
-            if is {
-                ggdns_req_tx
-                    .send((payload, addr))
-                    .await
-                    .expect("[E] ggdns_req_tx send");
-            } else {
-                alidns_req_tx
-                    .send((payload, addr))
-                    .await
-                    .expect("[E] alidns_req_tx send");
-            }
+                // exclude
+                let is = exclude_trie.domain_prefix_match(&domain);
+                #[cfg(debug_assertions)]
+                println!("[+] {addr:?} exclude {is:?}");
+                if is {
+                    alidns_req_tx
+                        .send((payload, addr))
+                        .await
+                        .expect("[E] alidns_req_tx send");
+                    return;
+                }
+
+                // block
+                let is = block_trie.domain_prefix_match(&domain);
+                #[cfg(debug_assertions)]
+                println!("[+] {addr:?} block {is:?}");
+                if is {
+                    let buf = fake_response(payload.as_ref(), end_offset);
+                    let _len = sock_local_c
+                        .send_to(&buf, &addr)
+                        .await
+                        .expect("[E] sock_local send_to");
+
+                    #[cfg(debug_assertions)]
+                    println!("[+] {addr:?} send fake response({_len:?})");
+                    return;
+                }
+
+                let is = trie.domain_prefix_match(&domain);
+                #[cfg(debug_assertions)]
+                println!("[+] {addr:?} proxy {is:?}");
+                if is {
+                    ggdns_req_tx
+                        .send((payload, addr))
+                        .await
+                        .expect("[E] ggdns_req_tx send");
+                } else {
+                    alidns_req_tx
+                        .send((payload, addr))
+                        .await
+                        .expect("[E] alidns_req_tx send");
+                }
+            });
         }
     });
 

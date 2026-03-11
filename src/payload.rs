@@ -47,6 +47,27 @@ impl Payload {
 
         (domain, current_offset)
     }
+
+    pub fn servfail(&mut self) {
+        debug_assert!(self.0.len() >= 12);
+
+        unsafe {
+            let p = self.0.as_mut_ptr();
+
+            // QR = 1
+            *p.add(2) |= 0x80;
+
+            // RA = 1
+            *p.add(3) |= 0x80;
+
+            // RCODE = 2
+            *p.add(3) = (*p.add(3) & 0xF0) | 2;
+
+            // clear ANCOUNT / NSCOUNT / ARCOUNT
+            std::ptr::write_unaligned(p.add(6) as *mut u32, 0);
+            std::ptr::write_unaligned(p.add(10) as *mut u16, 0);
+        }
+    }
 }
 
 #[cfg(test)]
