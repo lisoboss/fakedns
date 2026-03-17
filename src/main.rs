@@ -69,26 +69,30 @@ async fn create_tx(sock_local: Arc<UdpSocket>, addr: &str) -> mpsc::Sender<(Payl
     spawn(async move { dns.work_response().await });
     let (tx_req, mut rx_req) = mpsc::channel::<(Payload, SocketAddr)>(MAX_BUFFER);
     spawn(async move {
-        while let Some((payload, addr)) = rx_req.recv().await {
+        while let Some((mut payload, addr)) = rx_req.recv().await {
             #[cfg(debug_assertions)]
             println!("[+] {addr:?} send raw request");
 
             let (resp, rx) = oneshot::channel::<Payload>();
             let id = payload.id();
-            tx_dns
-                .send(DnsCommand::Query { payload, resp })
-                .await
-                .expect("[E] raw request dns cmd query");
+            {
+                let payload = payload.clone();
+                tx_dns
+                    .send(DnsCommand::Query { payload, resp })
+                    .await
+                    .expect("[E] raw request dns cmd query");
+            }
 
-            // 5 seconds
-            let timeout = 1000 * 5;
+            // 3ms
+            let timeout = 300;
             let payload = handle!(handle!(cancel!(rx, timeout), e => {
                 println!("[E] raw request dns rx {e:?} {addr:?}");
                 tx_dns
                 .send(DnsCommand::TimedOut { id })
                 .await
                 .expect("[E] raw request dns cmd timedout");
-                continue;
+                payload.servfail();
+                Ok(payload)
             }), e => {
                 println!("[E] raw request dns rx {e:?} {addr:?}");
                 continue;
